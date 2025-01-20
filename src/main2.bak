@@ -1,0 +1,88 @@
+#include <ESP8266WiFi.h>
+#include <ESPAsyncWebServer.h>
+#include "wifi_config.h"
+#include "web_ui.h"  // Separate file for HTML
+
+#define BUTTON_PIN 0  // GPIO0 (BOOT)
+#define LED_PIN 2  // GPIO2 (Built-in LED)
+#define LONG_PRESS_TIME 3000  // 3 seconds
+
+AsyncWebServer server(80);
+bool apMode = false;
+
+void startAP() {
+    WiFi.disconnect();
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP("ESP-IR");
+    apMode = true;
+    Serial.println("Hotspot started");
+}
+
+void handleButtonPress() {
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    if (digitalRead(BUTTON_PIN) == LOW) {
+        delay(LONG_PRESS_TIME);
+        if (digitalRead(BUTTON_PIN) == LOW) {
+            startAP();
+        }
+    }
+}
+
+void blinkLED() {
+    if (apMode) {
+        digitalWrite(LED_PIN, !digitalRead(LED_PIN)); // Blink every second in AP mode
+        delay(1000);
+    }
+}
+
+void fastBlinkLED() {
+    for (int i = 0; i < 5; i++) {
+        digitalWrite(LED_PIN, HIGH);
+        delay(100);
+        digitalWrite(LED_PIN, LOW);
+        delay(100);
+    }
+    digitalWrite(LED_PIN, LOW); // Ensure LED is off after blinking
+}
+
+void setup() {
+    Serial.begin(115200);
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, LOW); // Ensure LED starts off
+    
+    if (!connectToWiFi()) {
+        Serial.println("Failed to connect to Wi-Fi");
+        startAP();
+    } else {
+        fastBlinkLED();
+        digitalWrite(LED_PIN, LOW); // Turn off LED after successful connection
+    }
+
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+        request->send_P(200, "text/html", INDEX_HTML);
+    });
+
+    server.on("/config_ir", HTTP_GET, [](AsyncWebServerRequest *request){
+        request->send_P(200, "text/html", CONFIG_IR_HTML);
+    });
+    
+    server.on("/setwifi", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (request->hasParam("ssid", true) && request->hasParam("password", true)) {
+            String ssid = request->getParam("ssid", true)->value();
+            String password = request->getParam("password", true)->value();
+            saveWiFiConfig(ssid.c_str(), password.c_str());
+            request->send(200, "text/plain", "WiFi configured. Restart ESP.");
+        } else {
+            request->send(400, "text/plain", "Invalid data");
+        }
+    });
+
+    server.begin();
+    Serial.println("Server started");
+}
+
+void loop() {
+    handleButtonPress();
+    blinkLED();
+}
